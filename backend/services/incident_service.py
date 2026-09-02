@@ -429,8 +429,9 @@ class IncidentService:
 
         timeline = []
         for log in logs:
+            ts = log.created_at.isoformat() if hasattr(log.created_at, "isoformat") else str(log.created_at) if log.created_at else None
             timeline.append({
-                "timestamp": log.created_at.isoformat(),
+                "timestamp": ts,
                 "actor": log.actor,
                 "action": log.action,
                 "description": log.reason or log.action,
@@ -440,16 +441,17 @@ class IncidentService:
 
         # Also include detection start from incident
         incident = session.query(Incident).filter_by(id=incident_id).first()
-        if incident:
+        if incident and incident.start_time:
+            ts_start = incident.start_time.isoformat() if hasattr(incident.start_time, "isoformat") else str(incident.start_time)
             timeline.insert(0, {
-                "timestamp": incident.start_time.isoformat(),
+                "timestamp": ts_start,
                 "actor": "SYSTEM",
                 "action": "ANOMALY_START",
                 "description": "Payment anomaly began",
-                "result": f"Success rate: {incident.current_success_rate*100:.1f}%",
+                "result": f"Success rate: {(incident.current_success_rate or 0)*100:.1f}%",
             })
 
-        return sorted(timeline, key=lambda x: x["timestamp"])
+        return sorted([t for t in timeline if t.get("timestamp")], key=lambda x: x["timestamp"])
 
     def resolve_incident(self, session: Session, incident_id: str) -> Incident:
         incident = session.query(Incident).filter_by(id=incident_id).first()

@@ -38,6 +38,41 @@ class ChatRequest(BaseModel):
     incident_id: str
 
 
+def _to_iso(val):
+    if val is None:
+        return None
+    if hasattr(val, "isoformat"):
+        return val.isoformat()
+    return str(val)
+
+
+def _compute_duration_minutes(start_time, resolved_at=None) -> float:
+    if not start_time:
+        return 0.0
+    try:
+        if isinstance(start_time, str):
+            start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        else:
+            start_dt = start_time
+
+        if resolved_at:
+            if isinstance(resolved_at, str):
+                end_dt = datetime.fromisoformat(resolved_at.replace("Z", "+00:00"))
+            else:
+                end_dt = resolved_at
+        else:
+            end_dt = datetime.now(timezone.utc)
+
+        if start_dt.tzinfo is None and end_dt.tzinfo is not None:
+            start_dt = start_dt.replace(tzinfo=timezone.utc)
+        elif start_dt.tzinfo is not None and end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=timezone.utc)
+
+        return max(0.0, (end_dt - start_dt).total_seconds() / 60.0)
+    except Exception:
+        return 0.0
+
+
 @router.get("/incidents")
 async def list_incidents(
     severity: Optional[str] = None,
@@ -48,8 +83,7 @@ async def list_incidents(
 ):
     """List incidents with optional filters."""
     query = """
-        SELECT i.*, m.name as merchant_name,
-               EXTRACT(EPOCH FROM (COALESCE(i.resolved_at, NOW()) - i.start_time))/60 AS duration_minutes
+        SELECT i.*, m.name as merchant_name
         FROM incidents i
         JOIN merchants m ON i.merchant_id = m.id
         WHERE 1=1
@@ -76,14 +110,14 @@ async def list_incidents(
                 "severity": r.severity,
                 "status": r.status,
                 "title": r.title,
-                "start_time": r.start_time.isoformat() if r.start_time else None,
-                "detected_at": r.detected_at.isoformat() if r.detected_at else None,
-                "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
+                "start_time": _to_iso(r.start_time),
+                "detected_at": _to_iso(r.detected_at),
+                "resolved_at": _to_iso(r.resolved_at),
                 "current_success_rate": r.current_success_rate,
                 "baseline_success_rate": r.baseline_success_rate,
                 "affected_transaction_count": r.affected_transaction_count,
                 "estimated_exposure": float(r.estimated_exposure or 0),
-                "duration_minutes": float(r.duration_minutes or 0),
+                "duration_minutes": round(_compute_duration_minutes(r.start_time, r.resolved_at), 1),
             }
             for r in rows
         ],
@@ -146,13 +180,14 @@ async def get_incident(incident_id: str, db: AsyncSession = Depends(get_db)):
         "status": row.status,
         "title": row.title,
         "description": row.description,
-        "start_time": row.start_time.isoformat() if row.start_time else None,
-        "detected_at": row.detected_at.isoformat() if row.detected_at else None,
-        "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+        "start_time": _to_iso(row.start_time),
+        "detected_at": _to_iso(row.detected_at),
+        "resolved_at": _to_iso(row.resolved_at),
         "current_success_rate": row.current_success_rate,
         "baseline_success_rate": row.baseline_success_rate,
         "affected_transaction_count": row.affected_transaction_count,
         "estimated_exposure": float(row.estimated_exposure or 0),
+        "duration_minutes": round(_compute_duration_minutes(row.start_time, row.resolved_at), 1),
         "investigation_report": row.investigation_report,
         "signals": signals,
         "hypotheses": hypotheses,
@@ -209,8 +244,8 @@ async def get_impact(incident_id: str, db: AsyncSession = Depends(get_db)):
         SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failures,
-            SUM(CASE WHEN status = 'FAILED' THEN amount::float ELSE 0 END) AS failed_value,
-            AVG(amount::float) AS avg_amount,
+            SUM(CASE WHEN status = 'FAILED' THEN CAST(amount AS FLOAT) ELSE 0 END) AS failed_value,
+            AVG(CAST(amount AS FLOAT)) AS avg_amount,
             COUNT(DISTINCT CASE WHEN status = 'FAILED' THEN customer_id END) AS affected_customers
         FROM transactions
         WHERE merchant_id = :merchant_id AND created_at BETWEEN :start AND :end
@@ -273,17 +308,21 @@ async def trigger_investigation(
 
     # Update status to INVESTIGATING
     await db.execute(
-        text("UPDATE incidents SET status = 'INVESTIGATING', updated_at = NOW() WHERE id = :id"),
-        {"id": incident_id}
+        text("UPDATE incidents SET status = 'INVESTIGATING', updated_at = :now WHERE id = :id"),
+        {"id": incident_id, "now": datetime.now(timezone.utc)}
     )
     await db.commit()
+
+    # Extract scalar values while the session is still open to avoid DetachedInstanceError
+    merchant_id_val = str(row.merchant_id)
+    start_time_val = row.start_time
 
     # Run investigation in background
     background_tasks.add_task(
         _run_investigation_background,
         incident_id=incident_id,
-        merchant_id=str(row.merchant_id),
-        start_time=row.start_time,
+        merchant_id=merchant_id_val,
+        start_time=start_time_val,
     )
 
     return {

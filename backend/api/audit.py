@@ -47,7 +47,11 @@ async def get_audit_logs(
                 "approval_status": r.approval_status,
                 "result": r.result,
                 "metadata": r.metadata,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "created_at": (
+                    r.created_at.isoformat()
+                    if hasattr(r.created_at, "isoformat")
+                    else str(r.created_at) if r.created_at else None
+                ),
             }
             for r in rows
         ],

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { Suspense, useEffect, useState, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { 
   Bot, 
@@ -28,7 +28,7 @@ interface IncidentOption {
   severity: string;
 }
 
-export default function InvestigatorPage() {
+function InvestigatorContent() {
   const searchParams = useSearchParams();
   const initialIncidentId = searchParams.get("incident_id") || "";
 
@@ -291,3 +291,12 @@ export default function InvestigatorPage() {
     </div>
   );
 }
+
+export default function InvestigatorPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: "40px", color: "var(--text-muted)" }}>Loading Investigator...</div>}>
+      <InvestigatorContent />
+    </Suspense>
+  );
+}
+

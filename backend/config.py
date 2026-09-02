@@ -1,3 +1,4 @@
+import os
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
 from typing import Optional
@@ -5,8 +6,8 @@ from typing import Optional
 
 class Settings(BaseSettings):
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/paypulse"
-    DATABASE_URL_SYNC: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/paypulse"
+    DATABASE_URL: str = "postgresql://postgres:paypulse%407671@db.lfdyxolherrsbkoakfxz.supabase.co:5432/postgres"
+    DATABASE_URL_SYNC: str = "postgresql://postgres:paypulse%407671@db.lfdyxolherrsbkoakfxz.supabase.co:5432/postgres"
 
     # AI
     GEMINI_API_KEY: Optional[str] = None
@@ -29,7 +30,14 @@ class Settings(BaseSettings):
     SIM_NORMAL_SUCCESS_RATE_MAX: float = 0.96
     SIM_TPS: float = 2.0  # transactions per second for live sim
 
-    model_config = {"env_file": ".env", "extra": "ignore"}
+    model_config = {
+        "env_file": [
+            os.path.join(os.path.dirname(__file__), ".env"),
+            os.path.join(os.path.dirname(__file__), "..", ".env"),
+            ".env"
+        ],
+        "extra": "ignore"
+    }
 
     @property
     def cors_origins_list(self) -> list[str]:

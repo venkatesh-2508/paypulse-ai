@@ -91,33 +91,39 @@ d:/Ai_proj/
 
 ## ⚡ Quickstart & Setup
 
-### 1. Backend Setup
+### Option A: One-Click Docker Deployment (Recommended)
 
 ```bash
-# Create and activate virtual environment
+docker compose up --build
+```
+- Frontend: **`http://localhost:3000`**
+- Backend API Docs: **`http://localhost:8000/docs`**
+
+---
+
+### Option B: Local Setup
+
+#### 1. One-Click Scripts
+- **Windows**: Double-click or run `.\start.bat`
+- **Linux/macOS**: Run `chmod +x start.sh && ./start.sh`
+
+#### 2. Manual Commands
+
+**Backend**:
+```bash
 cd backend
 python -m venv .venv
-.venv\Scripts\activate
-
-# Install dependencies
+.venv\Scripts\activate          # On Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
-
-# Run seed data generator (generates 85,000+ transactions & baselines)
-python ../data_generator/generate.py --mode seed
-
-# Start FastAPI server
-uvicorn backend.main:app --reload --port 8000
+uvicorn main:app --reload --port 8000
 ```
 
-### 2. Frontend Setup
-
+**Frontend**:
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-
-Open **`http://localhost:3000`** in your browser.
 
 ---
 
@@ -125,7 +131,7 @@ Open **`http://localhost:3000`** in your browser.
 
 ### Run Unit & Integration Tests
 ```bash
-pytest backend/tests/test_paypulse.py -v
+backend\.venv\Scripts\pytest backend/tests/test_paypulse.py -v
 ```
 *(All 5 test suites pass with 100% coverage)*
 
@@ -141,3 +147,4 @@ python evaluation/evaluate.py
 1. Open `http://localhost:3000`
 2. Click **One-Click Demo** in the top navigation bar.
 3. Observe UPI failure rate spike, anomaly alert triggered, AI investigation completed with hypotheses, action approved, and post-action verification confirmed!
+

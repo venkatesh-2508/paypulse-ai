@@ -23,6 +23,36 @@ def db_session():
         yield session
 
 
+@pytest.fixture(scope="module", autouse=True)
+def ensure_recent_traffic(db_session: Session):
+    """Ensure recent transactions exist in the test window so tests are deterministic."""
+    merchant = db_session.execute(text("SELECT id FROM merchants LIMIT 1")).fetchone()
+    if not merchant:
+        return
+    merchant_id = str(merchant.id)
+    now = datetime.now(timezone.utc)
+
+    recent_cnt = db_session.execute(
+        text("SELECT COUNT(*) AS cnt FROM transactions WHERE merchant_id = :mid AND created_at >= :since"),
+        {"mid": merchant_id, "since": now - timedelta(minutes=60)}
+    ).fetchone().cnt
+
+    if recent_cnt < 50:
+        db_session.execute(
+            text("""
+                UPDATE transactions
+                SET created_at = :now
+                WHERE id IN (
+                    SELECT id FROM transactions
+                    WHERE merchant_id = :mid AND scenario_tag = 'upi_degradation'
+                    LIMIT 200
+                )
+            """),
+            {"now": now - timedelta(minutes=10), "mid": merchant_id}
+        )
+        db_session.commit()
+
+
 def test_merchant_and_baselines_exist(db_session: Session):
     """Verify seed data created active merchant and baselines."""
     merchant = db_session.execute(text("SELECT * FROM merchants LIMIT 1")).fetchone()

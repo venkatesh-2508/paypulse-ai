@@ -235,7 +235,7 @@ Start by calling get_incident, then systematically gather evidence before creati
         try:
             genai.configure(api_key=settings.GEMINI_API_KEY)
             self.model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
+                model_name="gemini-2.5-flash",
                 tools=self._build_gemini_tools(),
                 system_instruction=self.SYSTEM_PROMPT,
             )
@@ -334,7 +334,7 @@ Start by calling get_incident, then systematically gather evidence before creati
             response = chat.send_message(parts)
 
         if final_report:
-            final_report["generated_by"] = "gemini-1.5-flash"
+            final_report["generated_by"] = "gemini-2.5-flash"
             final_report["generated_at"] = datetime.now(timezone.utc).isoformat()
             return final_report
 
@@ -716,8 +716,8 @@ class ToolExecutor:
             SELECT
                 COUNT(*) AS total,
                 SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failures,
-                SUM(CASE WHEN status = 'FAILED' THEN amount::float ELSE 0 END) AS failed_value,
-                AVG(amount::float) AS avg_amount,
+            SUM(CASE WHEN status = 'FAILED' THEN CAST(amount AS FLOAT) ELSE 0 END) AS failed_value,
+            AVG(CAST(amount AS FLOAT)) AS avg_amount,
                 COUNT(DISTINCT CASE WHEN status = 'FAILED' THEN customer_id END) AS affected_customers
             FROM transactions
             WHERE merchant_id = :merchant_id AND created_at BETWEEN :start AND :end
