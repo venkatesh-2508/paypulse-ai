@@ -229,7 +229,7 @@ Start by calling get_incident, then systematically gather evidence before creati
         self.model = None
         self._init_client()
 
-    MODEL_NAME = "gemini-3.6-flash"
+    MODEL_NAME = "gemini-2.0-flash"
 
     def _init_client(self):
         if not settings.GEMINI_API_KEY:
