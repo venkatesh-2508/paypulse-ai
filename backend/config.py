@@ -6,8 +6,8 @@ from typing import Optional
 
 class Settings(BaseSettings):
     # Database
-    DATABASE_URL: str = "postgresql://postgres:paypulse%407671@db.lfdyxolherrsbkoakfxz.supabase.co:5432/postgres"
-    DATABASE_URL_SYNC: str = "postgresql://postgres:paypulse%407671@db.lfdyxolherrsbkoakfxz.supabase.co:5432/postgres"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres.lfdyxolherrsbkoakfxz:paypulse%407671@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres"
+    DATABASE_URL_SYNC: str = "postgresql://postgres.lfdyxolherrsbkoakfxz:paypulse%407671@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres"
 
     # AI
     GEMINI_API_KEY: Optional[str] = None

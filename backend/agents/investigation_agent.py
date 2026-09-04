@@ -12,7 +12,8 @@ import traceback
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 
 from backend.config import settings
 from backend.investigation.investigation_engine import InvestigationResult
@@ -228,32 +229,32 @@ Start by calling get_incident, then systematically gather evidence before creati
         self.model = None
         self._init_client()
 
+    MODEL_NAME = "gemini-3.6-flash"
+
     def _init_client(self):
         if not settings.GEMINI_API_KEY:
             print("[agent] No GEMINI_API_KEY — will use fallback deterministic investigation.")
             return
         try:
-            genai.configure(api_key=settings.GEMINI_API_KEY)
-            self.model = genai.GenerativeModel(
-                model_name="gemini-2.5-flash",
-                tools=self._build_gemini_tools(),
-                system_instruction=self.SYSTEM_PROMPT,
-            )
+            self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            # Validate by listing models (lightweight check)
+            self.model = self.MODEL_NAME
+            print(f"[agent] Gemini client initialized with model {self.MODEL_NAME}")
         except Exception as e:
             print(f"[agent] Gemini init failed: {e}")
+            self.client = None
             self.model = None
 
     def _build_gemini_tools(self):
-        """Convert tool definitions to Gemini FunctionDeclaration format."""
-        from google.generativeai.types import FunctionDeclaration, Tool
+        """Convert tool definitions to google.genai Tool format."""
         declarations = []
         for tool in AGENT_TOOLS:
-            declarations.append(FunctionDeclaration(
+            declarations.append(genai_types.FunctionDeclaration(
                 name=tool["name"],
                 description=tool["description"],
                 parameters=tool["parameters"],
             ))
-        return [Tool(function_declarations=declarations)]
+        return [genai_types.Tool(function_declarations=declarations)]
 
     def _execute_tool(self, name: str, args: dict) -> Any:
         """Route tool call to tool executor."""
@@ -268,7 +269,7 @@ Start by calling get_incident, then systematically gather evidence before creati
         Returns a structured investigation report dict.
         Falls back to deterministic summary if AI unavailable.
         """
-        if self.model is None:
+        if self.client is None or self.model is None:
             return self._deterministic_fallback(incident_id)
 
         try:
@@ -278,63 +279,74 @@ Start by calling get_incident, then systematically gather evidence before creati
             return self._deterministic_fallback(incident_id)
 
     def _run_gemini_agent(self, incident_id: str) -> dict:
-        """Run Gemini multi-turn function calling loop."""
-        chat = self.model.start_chat()
-
-        # Kick off investigation
-        user_message = (
-            f"Investigate payment incident {incident_id}. "
-            "Use your tools to gather evidence, then create a complete investigation report."
+        """Run Gemini multi-turn function calling loop using google.genai SDK."""
+        tools = self._build_gemini_tools()
+        config = genai_types.GenerateContentConfig(
+            system_instruction=self.SYSTEM_PROMPT,
+            tools=tools,
         )
 
-        response = chat.send_message(user_message)
+        # Build conversation history
+        contents = [
+            genai_types.Content(
+                role="user",
+                parts=[genai_types.Part(text=(
+                    f"Investigate payment incident {incident_id}. "
+                    "Use your tools to gather evidence, then create a complete investigation report."
+                ))]
+            )
+        ]
+
         final_report = None
         max_turns = 15
 
         for turn in range(max_turns):
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=config,
+            )
+
+            # Append model response to history
+            contents.append(response.candidates[0].content)
+
             # Check for function calls
             fn_calls = []
             for part in response.candidates[0].content.parts:
-                if hasattr(part, "function_call") and part.function_call:
+                if part.function_call:
                     fn_calls.append(part.function_call)
 
             if not fn_calls:
-                # No more tool calls — extract text response
+                # No more tool calls — done
                 break
 
-            # Execute all tool calls
-            tool_responses = []
+            # Execute all tool calls and collect results
+            fn_response_parts = []
             for fc in fn_calls:
                 result = self._execute_tool(fc.name, dict(fc.args))
 
                 if fc.name == "create_investigation_report":
                     final_report = dict(fc.args)
 
-                tool_responses.append({
-                    "function_response": {
-                        "name": fc.name,
-                        "response": {"result": result}
-                    }
-                })
+                fn_response_parts.append(
+                    genai_types.Part(
+                        function_response=genai_types.FunctionResponse(
+                            name=fc.name,
+                            response={"result": json.dumps(result, default=str)},
+                        )
+                    )
+                )
+
+            # Append tool results to history
+            contents.append(
+                genai_types.Content(role="tool", parts=fn_response_parts)
+            )
 
             if final_report:
                 break
 
-            # Send tool results back
-            import google.generativeai.types as gtypes
-            parts = []
-            for tr in tool_responses:
-                parts.append(genai.protos.Part(
-                    function_response=genai.protos.FunctionResponse(
-                        name=tr["function_response"]["name"],
-                        response={"result": json.dumps(tr["function_response"]["response"]["result"], default=str)},
-                    )
-                ))
-
-            response = chat.send_message(parts)
-
         if final_report:
-            final_report["generated_by"] = "gemini-2.5-flash"
+            final_report["generated_by"] = self.MODEL_NAME
             final_report["generated_at"] = datetime.now(timezone.utc).isoformat()
             return final_report
 

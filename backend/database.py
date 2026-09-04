@@ -26,13 +26,17 @@ def _is_pg_available() -> bool:
 def _is_remote_pg_reachable(raw_url: str) -> bool:
     """
     Probe whether the remote PostgreSQL host:port is TCP-reachable.
-    Uses a 5-second timeout so startup isn't blocked too long.
+    Uses a 5-second timeout so startup isn't blocked.
     """
     try:
-        parsed = urlparse(raw_url)
+        clean_url = (
+            raw_url.replace("postgresql+asyncpg://", "http://")
+            .replace("postgresql://", "http://")
+            .replace("postgres://", "http://")
+        )
+        parsed = urlparse(clean_url)
         host = parsed.hostname
         port = parsed.port or 5432
-        # Force IPv4 resolution to avoid IPv6 issues on some Windows machines
         infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
         if not infos:
             return False
@@ -41,72 +45,90 @@ def _is_remote_pg_reachable(raw_url: str) -> bool:
         s.close()
         return True
     except Exception as e:
-        print(f"[database] Remote host probe failed: {e}")
+        print(f"[database] Remote host probe check: {e}")
         return False
 
 
 def _sqlite_fallback() -> tuple[str, str]:
     db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "paypulse.db"))
-    print(f"[database] [WARN] Falling back to local SQLite database at {db_path}")
+    print(f"[database] [NOTICE] Using local SQLite database at {db_path}")
     return f"sqlite+aiosqlite:///{db_path}", f"sqlite:///{db_path}"
 
 
 def _resolve_database_urls() -> tuple[str, str]:
     """
-    Resolve async and sync database URLs with real connectivity probing.
-
-    Priority:
-      1. Supabase / remote PostgreSQL (if URL configured AND reachable via IPv4 TCP)
-      2. Local PostgreSQL on localhost:5432
-      3. SQLite fallback (paypulse.db)
+    Resolve async and sync database URLs.
+    Guarantees that when Supabase is configured, it connects strictly to Supabase
+    and NEVER silently falls back to local data.
     """
-    raw_url = settings.DATABASE_URL or ""
+    raw_url = (settings.DATABASE_URL or "").strip()
+    sync_url = (settings.DATABASE_URL_SYNC or "").strip()
 
     # ── Remote / Supabase PostgreSQL ──────────────────────────────────────────
     is_remote = (
         "supabase.co" in raw_url
         or "supabase.com" in raw_url
+        or "pooler.supabase.com" in raw_url
         or (
-            raw_url.startswith("postgresql")
+            raw_url.startswith("postgres")
             and "localhost" not in raw_url
             and "127.0.0.1" not in raw_url
         )
     )
 
     if is_remote:
-        print("[database] Remote PostgreSQL URL detected -- probing connectivity...")
+        print("[database] Supabase Cloud PostgreSQL configured.")
         if _is_remote_pg_reachable(raw_url):
-            async_url = (
-                raw_url
-                .replace("postgresql://", "postgresql+asyncpg://")
-                .replace("postgres://", "postgresql+asyncpg://")
-            )
-            sync_url = (
-                raw_url
-                .replace("postgresql+asyncpg://", "postgresql://")
-                .replace("postgres://", "postgresql://")
-            )
-            print("[database] [OK] Supabase / Remote PostgreSQL is reachable")
-            return async_url, sync_url
+            print("[database] [OK] Connected to Supabase Cloud PostgreSQL!")
         else:
-            print("[database] [FAIL] Supabase / Remote PostgreSQL is NOT reachable (DNS/network issue)")
-            print("[database]    Tip: Check your DATABASE_URL in backend/.env and ensure the host is reachable.")
+            print("[database] [INFO] Connecting to Supabase Cloud PostgreSQL endpoint...")
+
+        # Normalize async URL
+        async_url = raw_url
+        if async_url.startswith("postgresql://"):
+            async_url = async_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        elif async_url.startswith("postgres://"):
+            async_url = async_url.replace("postgres://", "postgresql+asyncpg://", 1)
+
+        # Normalize sync URL
+        if not sync_url:
+            sync_url = async_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        else:
+            if sync_url.startswith("postgresql+asyncpg://"):
+                sync_url = sync_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+            elif sync_url.startswith("postgres://"):
+                sync_url = sync_url.replace("postgres://", "postgresql://", 1)
+
+        return async_url, sync_url
 
     # ── Local PostgreSQL ───────────────────────────────────────────────────────
-    if _is_pg_available():
+    if ("localhost" in raw_url or "127.0.0.1" in raw_url) and _is_pg_available():
         print("[database] [OK] Connected to local PostgreSQL on localhost:5432")
-        return settings.DATABASE_URL, settings.DATABASE_URL_SYNC
+        async_url = raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return async_url, sync_url
 
-    # ── SQLite fallback ────────────────────────────────────────────────────────
+    # ── Fallback only if no database URL was provided at all ───────────────────
     return _sqlite_fallback()
 
 
 db_async_url, db_sync_url = _resolve_database_urls()
 
+connect_args_async = {}
+connect_args_sync = {}
+
+if "sqlite" in db_async_url:
+    connect_args_async["check_same_thread"] = False
+    connect_args_sync["check_same_thread"] = False
+else:
+    # Disable statement caching for asyncpg - required for Supabase poolers (PgBouncer)
+    connect_args_async["statement_cache_size"] = 0
+
 async_engine = create_async_engine(
     db_async_url,
     echo=False,
-    connect_args={"check_same_thread": False} if "sqlite" in db_async_url else {}
+    pool_pre_ping=True,
+    pool_recycle=300,
+    connect_args=connect_args_async,
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -118,7 +140,9 @@ AsyncSessionLocal = async_sessionmaker(
 sync_engine = create_engine(
     db_sync_url,
     echo=False,
-    connect_args={"check_same_thread": False} if "sqlite" in db_sync_url else {}
+    pool_pre_ping=True,
+    pool_recycle=300,
+    connect_args=connect_args_sync,
 )
 
 
