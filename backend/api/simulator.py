@@ -8,7 +8,7 @@ import random
 import uuid
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from typing import Optional
+
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -316,7 +316,7 @@ def _simulator_loop(tps: float):
                         transaction_id=txn_id,
                         event_type=evt_type,
                         created_at=now + timedelta(seconds=offset_s),
-                        metadata={"error_reason": error_reason} if not success and evt_type == EventType.PAYMENT_FAILURE else {},
+                        metadata_json={"error_reason": error_reason} if not success and evt_type == EventType.PAYMENT_FAILURE else {},
                     ))
 
                 session.commit()
@@ -425,5 +425,3 @@ def _run_full_demo_story():
     _sim_state["mode"] = "normal"
     _sim_state["scenario"] = None
     print(f"[demo] Demo complete! Incident {incident_id} resolved.")
-
-import threading

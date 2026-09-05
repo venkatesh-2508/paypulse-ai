@@ -336,7 +336,6 @@ async def _run_investigation_background(
     incident_id: str, merchant_id: str, start_time: datetime
 ):
     """Background task to run AI investigation."""
-    import asyncio
     from sqlalchemy.orm import Session as SyncSession
 
     # Run in thread pool to avoid blocking
